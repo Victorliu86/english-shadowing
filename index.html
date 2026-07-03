@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="referrer" content="no-referrer">
+<title>美语跟读陪练</title>
+<style>
+  :root{
+    --bg:#0f1420; --card:#1a2233; --card2:#212b40; --text:#e8edf7; --muted:#8a94ab;
+    --accent:#4f8cff; --accent2:#39d98a; --danger:#ff6b6b; --border:#2c3852;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    padding:14px 14px 120px;}
+  h1{font-size:20px; margin:6px 0 2px; display:flex; align-items:center; gap:8px;}
+  .sub{color:var(--muted); font-size:12px; margin-bottom:12px; line-height:1.5;}
+  #providerBadge{display:inline-block; background:var(--card2); border:1px solid var(--border);
+    border-radius:20px; padding:2px 10px; font-size:11px; color:var(--accent2);}
+  textarea{width:100%; min-height:120px; background:var(--card); color:var(--text);
+    border:1px solid var(--border); border-radius:12px; padding:12px; font-size:15px;
+    line-height:1.5; resize:vertical; outline:none;}
+  textarea:focus{border-color:var(--accent);}
+  .row{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;}
+  select{flex:1; min-width:120px; background:var(--card); color:var(--text);
+    border:1px solid var(--border); border-radius:10px; padding:9px 8px; font-size:14px; outline:none;}
+  select:disabled{opacity:.45;}
+  .toggle{display:flex; align-items:center; gap:6px; background:var(--card);
+    border:1px solid var(--border); border-radius:10px; padding:9px 12px; font-size:14px;
+    cursor:pointer; user-select:none;}
+  .toggle input{accent-color:var(--accent2); width:16px; height:16px;}
+  .btns{display:flex; gap:8px; margin-top:10px;}
+  button{border:none; border-radius:12px; padding:12px 10px; font-size:15px; font-weight:600;
+    cursor:pointer; color:#fff; flex:1;}
+  #btnPlayAll{background:var(--accent);}
+  #btnStop{background:#374362;}
+  #btnDownload{background:#2a9d6f;}
+  button:disabled{opacity:.45;}
+  #status{margin-top:10px; font-size:13px; color:var(--muted); min-height:18px; line-height:1.5;}
+  #status.err{color:var(--danger);}
+  #status.ok{color:var(--accent2);}
+  #sentences{margin-top:12px; display:flex; flex-direction:column; gap:6px;}
+  .sent{background:var(--card); border:1px solid var(--border); border-radius:10px;
+    padding:10px 12px; font-size:15px; line-height:1.45; cursor:pointer; display:flex; gap:8px;}
+  .sent .num{color:var(--muted); font-size:12px; padding-top:2px; min-width:18px;}
+  .sent.active{background:var(--card2); border-color:var(--accent);}
+  .sent.active .num{color:var(--accent);}
+  #bar{position:fixed; left:0; right:0; bottom:0; background:rgba(20,27,42,.97);
+    border-top:1px solid var(--border); padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+    display:flex; gap:8px;}
+  #bar button{padding:11px 6px; font-size:14px; background:var(--card2);}
+  #bar button#bReplay{background:var(--accent);}
+</style>
+</head>
+<body>
+<h1>🎙️ 美语跟读陪练 <span id="providerBadge"></span></h1>
+<div class="sub">粘贴英文 → 逐句朗读（纯正美音）→ 点任意句子可单独重听</div>
+
+<textarea id="txt" placeholder="把英文句子或文章粘贴到这里…&#10;&#10;例如: The quick brown fox jumps over the lazy dog. Practice makes perfect."></textarea>
+
+<div class="row">
+  <select id="voice"></select>
+  <select id="rate">
+    <option value="0.7">语速：慢</option>
+    <option value="0.85">语速：稍慢</option>
+    <option value="1" selected>语速：正常</option>
+    <option value="1.15">语速：稍快</option>
+    <option value="1.3">语速：快</option>
+  </select>
+</div>
+<div class="row">
+  <label class="toggle"><input type="checkbox" id="shadow">跟读模式（每句后留空让你复述）</label>
+</div>
+
+<div class="btns">
+  <button id="btnPlayAll">▶ 从头朗读</button>
+  <button id="btnStop">⏹ 停止</button>
+  <button id="btnDownload">⬇ MP3</button>
+</div>
+<div id="status"></div>
+<div id="sentences"></div>
+
+<div id="bar">
+  <button id="bPrev">⏮ 上一句</button>
+  <button id="bReplay">🔁 重读本句</button>
+  <button id="bNext">⏭ 下一句</button>
+</div>
+
+<script>
+// ---------- SHA-256 (纯JS实现，兼容 file:// 与各类手机浏览器) ----------
+function sha256(ascii){
+  function rightRotate(value, amount){ return (value>>>amount) | (value<<(32-amount)); }
+  var mathPow=Math.pow, maxWord=mathPow(2,32), result='', words=[], asciiBitLength=ascii.length*8;
+  var hash=sha256.h=sha256.h||[], k=sha256.k=sha256.k||[], primeCounter=k.length;
+  var isComposite={};
+  for(var candidate=2; primeCounter<64; candidate++){
+    if(!isComposite[candidate]){
+      for(var i=0;i<313;i+=candidate) isComposite[i]=candidate;
+      hash[primeCounter]=(mathPow(candidate,.5)*maxWord)|0;
+      k[primeCounter++]=(mathPow(candidate,1/3)*maxWord)|0;
+    }
+  }
+  ascii+='\x80';
+  while(ascii.length%64-56) ascii+='\x00';
+  for(i=0;i<ascii.length;i++){
+    var j=ascii.charCodeAt(i);
+    if(j>>8) return;
+    words[i>>2]|=j<<((3-i)%4)*8;
+  }
+  words[words.length]=((asciiBitLength/maxWord)|0);
+  words[words.length]=(asciiBitLength);
+  for(j=0;j<words.length;){
+    var w=words.slice(j,j+=16), oldHash=hash;
+    hash=hash.slice(0,8);
+    for(i=0;i<64;i++){
+      var w15=w[i-15], w2=w[i-2];
+      var a=hash[0], e=hash[4];
+      var temp1=hash[7]
+        +(rightRotate(e,6)^rightRotate(e,11)^rightRotate(e,25))
+        +((e&hash[5])^((~e)&hash[6]))
+        +k[i]
+        +(w[i]=(i<16)?w[i]:(w[i-16]+(rightRotate(w15,7)^rightRotate(w15,18)^(w15>>>3))+w[i-7]+(rightRotate(w2,17)^rightRotate(w2,19)^(w2>>>10)))|0);
+      var temp2=(rightRotate(a,2)^rightRotate(a,13)^rightRotate(a,22))+((a&hash[1])^(a&hash[2])^(hash[1]&hash[2]));
+      hash=[(temp1+temp2)|0].concat(hash);
+      hash[4]=(hash[4]+temp1)|0;
+    }
+    for(i=0;i<8;i++) hash[i]=(hash[i]+oldHash[i])|0;
+  }
+  for(i=0;i<8;i++){
+    for(j=3;j+1;j--){
+      var b=(hash[i]>>(j*8))&255;
+      result+=((b<16)?0:'')+b.toString(16);
+    }
+  }
+  return result;
+}
+
+// ---------- Edge 神经语音（仅在 Edge 浏览器中可用：服务端校验 UA） ----------
+const TOKEN="6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+function secMsGec(){
+  let ticks=BigInt(Math.floor(Date.now()/1000)+11644473600)*10000000n;
+  ticks-=ticks%3000000000n;
+  return sha256(ticks.toString()+TOKEN).toUpperCase();
+}
+function uuid(){
+  return 'xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx'.replace(/[xy]/g,c=>{
+    const r=Math.random()*16|0, v=c==='x'?r:(r&0x3|0x8); return v.toString(16);
+  });
+}
+function escXml(s){
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+          .replace(/'/g,'&apos;').replace(/"/g,'&quot;');
+}
+
+function synthEdge(text, voice){
+  return new Promise((resolve,reject)=>{
+    const url="wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1"
+      +"?TrustedClientToken="+TOKEN
+      +"&Sec-MS-GEC="+secMsGec()
+      +"&Sec-MS-GEC-Version=1-143.0.3650.75"
+      +"&ConnectionId="+uuid();
+    let ws;
+    try{ ws=new WebSocket(url); }catch(e){ reject(e); return; }
+    ws.binaryType='arraybuffer';
+    const chunks=[]; let done=false;
+    const timer=setTimeout(()=>{ if(!done){done=true; ws.close(); reject(new Error('timeout'));} },15000);
+    ws.onopen=()=>{
+      const ts=new Date().toString();
+      ws.send("X-Timestamp:"+ts+"\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n"
+        +'{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}');
+      const ssml="<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>"
+        +"<voice name='"+voice+"'><prosody pitch='+0Hz' rate='+0%' volume='+0%'>"
+        +escXml(text)+"</prosody></voice></speak>";
+      ws.send("X-RequestId:"+uuid()+"\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:"+ts+"Z\r\nPath:ssml\r\n\r\n"+ssml);
+    };
+    ws.onmessage=(e)=>{
+      if(typeof e.data==='string'){
+        if(e.data.indexOf('Path:turn.end')>=0){
+          done=true; clearTimeout(timer); ws.close();
+          if(chunks.length) resolve(new Blob(chunks,{type:'audio/mpeg'}));
+          else reject(new Error('empty'));
+        }
+      }else{
+        const dv=new DataView(e.data);
+        const hlen=dv.getUint16(0);
+        const header=new TextDecoder().decode(e.data.slice(2,2+hlen));
+        if(header.indexOf('Path:audio')>=0 && e.data.byteLength>2+hlen)
+          chunks.push(e.data.slice(2+hlen));
+      }
+    };
+    ws.onerror=()=>{ if(!done){done=true; clearTimeout(timer); reject(new Error('ws error'));} };
+    ws.onclose=()=>{ if(!done){done=true; clearTimeout(timer); reject(new Error('closed'));} };
+  });
+}
+
+// ---------- 百度语音（通用兜底：任何浏览器可用，需 no-referrer） ----------
+function baiduUrl(text, lan){
+  return 'https://fanyi.baidu.com/gettts?lan='+lan+'&spd=4&source=web&text='+encodeURIComponent(text);
+}
+
+// ---------- 本机语音（最后兜底） ----------
+function speakFallback(text, rate){
+  return new Promise((resolve,reject)=>{
+    if(!window.speechSynthesis){ reject(new Error('no tts')); return; }
+    const u=new SpeechSynthesisUtterance(text);
+    u.lang='en-US'; u.rate=rate;
+    const vs=speechSynthesis.getVoices().filter(v=>v.lang&&v.lang.indexOf('en-US')===0);
+    if(vs.length) u.voice=vs[0];
+    u.onend=resolve; u.onerror=resolve;
+    speechSynthesis.speak(u);
+  });
+}
+
+// ---------- 应用逻辑 ----------
+const $=id=>document.getElementById(id);
+const txt=$('txt'), voiceSel=$('voice'), rateSel=$('rate'), shadowChk=$('shadow'),
+      statusEl=$('status'), listEl=$('sentences'), player=new Audio();
+
+const isEdgeBrowser=/Edg(A|iOS)?\//.test(navigator.userAgent);
+let provider=isEdgeBrowser?'edge':'baidu'; // edge -> baidu -> local 逐级降级
+let sentences=[], idx=-1, playing=false, continuous=false, shadowTimer=null, session=0;
+const cache=new Map(); // voice|text -> Promise<Blob>（仅 edge 模式）
+
+const PROVIDER_NAMES={edge:'微软神经语音', baidu:'标准语音', local:'本机语音'};
+const VOICES={
+  edge:[
+    ['en-US-AvaMultilingualNeural','Ava · 女声（最自然）'],
+    ['en-US-AriaNeural','Aria · 女声（生动）'],
+    ['en-US-JennyNeural','Jenny · 女声（亲切）'],
+    ['en-US-MichelleNeural','Michelle · 女声（清晰）'],
+    ['en-US-AndrewMultilingualNeural','Andrew · 男声（最自然）'],
+    ['en-US-GuyNeural','Guy · 男声（新闻播音）'],
+    ['en-US-ChristopherNeural','Christopher · 男声（沉稳）'],
+    ['en-US-EricNeural','Eric · 男声（平和）']
+  ],
+  baidu:[
+    ['en','女声 · 美音'],
+    ['uk','男声 · 英音']
+  ],
+  local:[]
+};
+function updateBadge(){
+  $('providerBadge').textContent=PROVIDER_NAMES[provider];
+  const opts=VOICES[provider];
+  voiceSel.innerHTML=opts.map(v=>'<option value="'+v[0]+'">'+v[1]+'</option>').join('');
+  voiceSel.disabled=(opts.length===0);
+  $('btnDownload').disabled=(provider!=='edge');
+}
+function downgrade(){
+  provider=(provider==='edge')?'baidu':'local';
+  updateBadge();
+  if(provider==='baidu')
+    setStatus('⚠️ 微软语音连接失败，已切换到标准美音','err');
+  else
+    setStatus('⚠️ 在线语音都连不上，已切换本机语音（请检查网络）','err');
+}
+updateBadge();
+if(!isEdgeBrowser){
+  setStatus('💡 提示：用 Edge 浏览器打开本页面，可解锁 8 种超自然的微软神经语音');
+}
+
+function setStatus(msg, cls){ statusEl.textContent=msg||''; statusEl.className=cls||''; }
+
+function splitSentences(t){
+  const out=[];
+  t.split(/\n+/).forEach(para=>{
+    const m=para.replace(/\s+/g,' ').trim().match(/[^.!?]+[.!?]+["')\]]*|[^.!?]+$/g);
+    if(m) m.forEach(s=>{ s=s.trim(); if(s) out.push(s); });
+  });
+  return out;
+}
+
+function renderList(){
+  listEl.innerHTML='';
+  sentences.forEach((s,i)=>{
+    const d=document.createElement('div');
+    d.className='sent'+(i===idx?' active':'');
+    d.innerHTML='<span class="num">'+(i+1)+'</span><span>'+escXml(s)+'</span>';
+    d.onclick=()=>playFrom(i);
+    listEl.appendChild(d);
+  });
+}
+function highlight(){
+  [...listEl.children].forEach((el,i)=>{
+    el.classList.toggle('active', i===idx);
+    if(i===idx) el.scrollIntoView({block:'nearest',behavior:'smooth'});
+  });
+}
+
+let refreshTimer=null;
+txt.addEventListener('input',()=>{
+  clearTimeout(refreshTimer);
+  refreshTimer=setTimeout(()=>{ sentences=splitSentences(txt.value); idx=-1; renderList(); },400);
+});
+
+function getEdgeBlob(text){
+  const key=voiceSel.value+'|'+text;
+  if(!cache.has(key)){
+    const p=synthEdge(text, voiceSel.value)
+      .catch(err=>{ cache.delete(key); throw err; });
+    cache.set(key,p);
+  }
+  return cache.get(key);
+}
+
+function stopAll(){
+  playing=false; continuous=false; session++;
+  clearTimeout(shadowTimer);
+  player.pause();
+  try{ speechSynthesis.cancel(); }catch(e){}
+}
+
+function playSrc(src, rate){
+  return new Promise((resolve,reject)=>{
+    player.src=src;
+    player.playbackRate=rate;
+    if('preservesPitch' in player) player.preservesPitch=true;
+    player.onended=resolve;
+    player.onerror=()=>reject(new Error('load/play failed'));
+    player.play().then(()=>{
+      // 空响应（如接口被拒）会立刻 ended 且 duration 为 0/NaN
+      if(!isFinite(player.duration)||player.duration===0){
+        setTimeout(()=>{ if(!isFinite(player.duration)||player.duration===0) reject(new Error('empty audio')); },500);
+      }
+    }).catch(reject);
+  });
+}
+function wait(ms){ return new Promise(r=>{ shadowTimer=setTimeout(r,ms); }); }
+
+// 播放一句：失败时逐级降级重试
+async function speakSentence(text, mySession){
+  const rate=parseFloat(rateSel.value);
+  for(;;){
+    if(mySession!==session) return false;
+    try{
+      if(provider==='edge'){
+        setStatus('⏳ 正在合成…');
+        const blob=await getEdgeBlob(text);
+        if(mySession!==session) return false;
+        await playSrc(URL.createObjectURL(blob), rate);
+      }else if(provider==='baidu'){
+        await playSrc(baiduUrl(text, voiceSel.value||'en'), rate);
+      }else{
+        await speakFallback(text, rate);
+      }
+      return mySession===session;
+    }catch(e){
+      if(mySession!==session) return false; // 是用户按了停止，不算故障
+      if(provider==='local'){ setStatus('播放失败：'+e.message,'err'); return false; }
+      downgrade();
+    }
+  }
+}
+
+async function playFrom(i, cont){
+  stopAll();
+  const mySession=session;
+  continuous=!!cont;
+  playing=true;
+  idx=i;
+  highlight();
+  while(mySession===session && idx<sentences.length){
+    const text=sentences[idx];
+    highlight();
+    // 预取下一句（仅 edge 模式）
+    if(provider==='edge' && idx+1<sentences.length && continuous)
+      getEdgeBlob(sentences[idx+1]).catch(()=>{});
+    setStatus('🔊 正在朗读第 '+(idx+1)+' / '+sentences.length+' 句','ok');
+    const ok=await speakSentence(text, mySession);
+    if(!ok) return;
+    if(shadowChk.checked){
+      const dur=(isFinite(player.duration)&&player.duration>0)
+        ? player.duration*1000/parseFloat(rateSel.value) : 3000;
+      setStatus('🗣 请跟读…');
+      await wait(dur);
+      if(mySession!==session) return;
+    }
+    if(!continuous){
+      setStatus('✅ 本句播完，点其他句子或 ⏭ 继续'); playing=false; return;
+    }
+    idx++;
+  }
+  if(mySession===session){ setStatus('🎉 全文读完！再点 ▶ 可重来'); playing=false; }
+}
+
+$('btnPlayAll').onclick=()=>{
+  sentences=splitSentences(txt.value);
+  renderList();
+  if(!sentences.length){ setStatus('请先粘贴英文内容','err'); return; }
+  playFrom(0, true);
+};
+$('btnStop').onclick=()=>{ stopAll(); setStatus('已停止'); };
+$('bPrev').onclick=()=>{ if(sentences.length) playFrom(Math.max(0,idx-1)); };
+$('bReplay').onclick=()=>{ if(sentences.length) playFrom(Math.max(0,idx)); };
+$('bNext').onclick=()=>{ if(sentences.length) playFrom(Math.min(sentences.length-1,idx+1)); };
+
+$('btnDownload').onclick=async ()=>{
+  sentences=splitSentences(txt.value);
+  if(!sentences.length){ setStatus('请先粘贴英文内容','err'); return; }
+  if(provider!=='edge'){ setStatus('MP3 下载需要微软语音（请用 Edge 浏览器打开）','err'); return; }
+  const btn=$('btnDownload'); btn.disabled=true;
+  try{
+    const blobs=[];
+    for(let i=0;i<sentences.length;i++){
+      setStatus('⏳ 正在合成 '+(i+1)+' / '+sentences.length+' …');
+      blobs.push(await getEdgeBlob(sentences[i]));
+    }
+    const all=new Blob(blobs,{type:'audio/mpeg'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(all);
+    a.download='english-practice.mp3';
+    a.click();
+    setStatus('✅ MP3 已生成并开始下载','ok');
+  }catch(e){
+    setStatus('下载失败：'+e.message,'err');
+  }finally{ btn.disabled=false; }
+};
+</script>
+</body>
+</html>
